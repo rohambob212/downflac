@@ -31,18 +31,101 @@ PIPELINE:
     4. Downloads it to '<title> by <artist> (<album>).<format>'.
 ";
 
-fn sanitize(s: &str) -> String {
+const ILLEGAL: &str = if cfg!(windows) {
+    "<>:\"/\\|?*"
+} else if cfg!(target_os = "macos") {
+    "/:"
+} else {
+    "/"
+};
+
+fn has_illegal(s: &str) -> bool {
+    s.chars().any(|c| ILLEGAL.contains(c) || c.is_control())
+}
+
+fn closest(c: char) -> char {
+    match c {
+        '<' => '＜',
+        '>' => '＞',
+        ':' => '：',
+        '"' => '＂',
+        '/' => '／',
+        '\\' => '＼',
+        '|' => '｜',
+        '?' => '？',
+        '*' => '＊',
+        c if c.is_control() => '_',
+        c => c,
+    }
+}
+
+fn autofix(s: &str) -> String {
     s.chars()
-        .map(|c| {
-            if "<>:\"/\\|?*".contains(c) || c.is_control() {
-                '_'
-            } else {
-                c
-            }
-        })
+        .map(closest)
         .collect::<String>()
         .trim_end_matches(['.', ' '])
         .to_string()
+}
+
+fn resolve_name(choice: &str, fmt: &str) -> Option<String> {
+    if !has_illegal(choice) {
+        return Some(format!("{choice}.{fmt}"));
+    }
+    let mut stem = autofix(choice);
+    if stem.is_empty() {
+        stem = "download".to_string();
+    }
+    let auto = format!("{stem}.{fmt}");
+    let keep = format!("save as \"{auto}\"");
+    let typeit = "enter a file name".to_string();
+    let cancel = "cancel download".to_string();
+    println!("\"{choice}\" cannot be used as a file name on this system");
+    loop {
+        let opts = vec![keep.clone(), typeit.clone(), cancel.clone()];
+        match inquire::Select::new("how should the file be named?", opts).prompt() {
+            Ok(o) if o == keep => return Some(auto),
+            Ok(o) if o == typeit => {
+                match inquire::Text::new("file name:")
+                    .with_default(&auto)
+                    .prompt()
+                {
+                    Ok(nm) => {
+                        let nm = nm.trim().to_string();
+                        if !nm.is_empty() && !has_illegal(&nm) {
+                            return Some(nm);
+                        }
+                        println!("\"{nm}\" cannot be used as a file name on this system");
+                    }
+                    Err(_) => return None,
+                }
+            }
+            Ok(o) if o == cancel => return None,
+            Ok(_) => unreachable!(),
+            Err(_) => return None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flags_platform_illegal_chars() {
+        assert!(!has_illegal("Song by Artist (Album)"));
+        assert!(has_illegal("AC/DC by AC\\DC (Live: 1979)"));
+        assert!(has_illegal("bad\nname"));
+        if cfg!(windows) {
+            assert!(has_illegal("what? by who* (x)"));
+        }
+    }
+
+    #[test]
+    fn autofix_yields_saveable_names() {
+        assert!(!has_illegal(&autofix("AC/DC by AC\\DC (Live: 1979)")));
+        assert!(!has_illegal(&autofix("trailing dots... ")));
+        assert_eq!(autofix("AC/DC"), "AC／DC");
+    }
 }
 
 #[tokio::main]
@@ -93,19 +176,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match nmsc {
         Ok(choice) => {
             let dt: api::Mdata = mhash[&choice].clone();
-            let link: String = api::getmusic(htc.clone(), dt.clone()).await?;
-            let down: Result<(), Box<dyn std::error::Error>> =
-                download::download(link, format!("{}.{}", sanitize(&choice), dt.minfo.format));
-            match down {
-                Ok(_) => println!("Download Completed"),
-                Err(e) => println!("Error: {}", e),
-            }
-            println!("{}", dt.pic);
-            let embed: Result<(), Box<dyn std::error::Error>> =
-                download::embed_cover(format!("{}.{}", sanitize(&choice), dt.minfo.format), dt.pic);
-            match embed {
-                Ok(_) => println!("Embed Completed"),
-                Err(e) => println!("Error: {}", e),
+            match resolve_name(&choice, &dt.minfo.format) {
+                Some(pth) => {
+                    let link: String = api::getmusic(htc.clone(), dt.clone()).await?;
+                    let down: Result<(), Box<dyn std::error::Error>> =
+                        download::download(link, pth.clone());
+                    match down {
+                        Ok(_) => println!("Download Completed"),
+                        Err(e) => println!("Error: {}", e),
+                    }
+                    println!("{}", dt.pic);
+                    let embed: Result<(), Box<dyn std::error::Error>> =
+                        download::embed_cover(pth, dt.pic);
+                    match embed {
+                        Ok(_) => println!("Embed Completed"),
+                        Err(e) => println!("Error: {}", e),
+                    }
+                }
+                None => println!("Download Cancelled"),
             }
         }
         Err(e) => println!("there was an error: {}", e),
