@@ -22,9 +22,9 @@ struct Udata {
 #[derive(serde::Deserialize, Serialize, Debug, Clone)]
 pub struct Minfobj {
     pub format: String,
-    bitrate: String,
-    level: String,
-    size: String,
+    pub bitrate: String,
+    pub level: String,
+    pub size: String,
 }
 
 pub struct Nusic {

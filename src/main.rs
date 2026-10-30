@@ -6,6 +6,7 @@ mod search {
 }
 use std::{collections::HashMap, env};
 mod download;
+mod share;
 use reqwest::Client as httpclient;
 
 const HELP: &str = "\
@@ -31,6 +32,15 @@ PIPELINE:
     2. Searches Kuwo for each match.
     3. Prompts you to select a result.
     4. Downloads it to '<title> by <artist> (<album>).<format>'.
+
+SHARING:
+    After selecting a song you can create a share code instead of
+    downloading. Paste that code as the search query to download the
+    exact same file. Nothing leaves your machine.
+
+PAUSING:
+    While a download runs, press Enter to pause it and Enter again
+    to resume.
 ";
 
 const ILLEGAL: &str = if cfg!(windows) {
@@ -92,9 +102,13 @@ fn resolve_name(choice: &str, fmt: &str) -> Option<String> {
                     .prompt()
                 {
                     Ok(nm) => {
-                        let nm = nm.trim().to_string();
+                        let nm = nm.trim().trim_end_matches(['.', ' ']).to_string();
                         if !nm.is_empty() && !has_illegal(&nm) {
-                            return Some(nm);
+                            let ext = format!(".{fmt}");
+                            if nm.to_lowercase().ends_with(&ext) {
+                                return Some(nm);
+                            }
+                            return Some(format!("{nm}{ext}"));
                         }
                         println!("\"{nm}\" cannot be used as a file name on this system");
                     }
@@ -105,6 +119,50 @@ fn resolve_name(choice: &str, fmt: &str) -> Option<String> {
             Ok(_) => unreachable!(),
             Err(_) => return None,
         }
+    }
+}
+
+async fn save(htc: httpclient, dt: api::Mdata, choice: String) {
+    let pth = match resolve_name(&choice, &dt.minfo.format) {
+        Some(pth) => pth,
+        None => {
+            println!("Download Cancelled");
+            return;
+        }
+    };
+    let link: String = match api::getmusic(htc.clone(), dt.clone()).await {
+        Ok(l) => l,
+        Err(e) => {
+            println!("Error: {}", e);
+            return;
+        }
+    };
+    let down: Result<(), Box<dyn std::error::Error>> = download::download(link, pth.clone());
+    match down {
+        Ok(_) => println!("Download Completed"),
+        Err(e) => println!("Error: {}", e),
+    }
+    if dt.pic.is_empty() {
+        println!("No cover to embed");
+        return;
+    }
+    println!("{}", dt.pic);
+    let embed: Result<(), Box<dyn std::error::Error>> = download::embed_cover(pth, dt.pic);
+    match embed {
+        Ok(_) => println!("Embed Completed"),
+        Err(e) => println!("Error: {}", e),
+    }
+}
+
+async fn act(htc: httpclient, dt: api::Mdata, choice: String) {
+    let opts: Vec<String> = vec!["download".to_string(), "get a share code".to_string()];
+    match inquire::Select::new("what do you want to do?", opts).prompt() {
+        Ok(o) if o == "download" => save(htc, dt, choice).await,
+        Ok(_) => match share::create(&choice, &dt) {
+            Some(code) => println!("Share code:\n{code}"),
+            None => println!("Error: could not build a share code"),
+        },
+        Err(e) => println!("there was an error: {}", e),
     }
 }
 
@@ -137,6 +195,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => println!("An error Happend: {}", e),
         }
     }
+    if let Some(sid) = share::parse(&name) {
+        match share::resolve(&sid) {
+            Some(shared) => {
+                let choice = format!("{} by {} ({})", shared.title, shared.artist, shared.album);
+                save(htc.clone(), shared.data, choice).await;
+            }
+            None => println!("Error: that is not a valid share code"),
+        }
+        return Ok(());
+    }
     let mut opts: Vec<String> = Vec::new();
 
     let mut mhash: HashMap<String, api::Mdata> = HashMap::new();
@@ -153,25 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match nmsc {
         Ok(choice) => {
             let dt: api::Mdata = mhash[&choice].clone();
-            match resolve_name(&choice, &dt.minfo.format) {
-                Some(pth) => {
-                    let link: String = api::getmusic(htc.clone(), dt.clone()).await?;
-                    let down: Result<(), Box<dyn std::error::Error>> =
-                        download::download(link, pth.clone());
-                    match down {
-                        Ok(_) => println!("Download Completed"),
-                        Err(e) => println!("Error: {}", e),
-                    }
-                    println!("{}", dt.pic);
-                    let embed: Result<(), Box<dyn std::error::Error>> =
-                        download::embed_cover(pth, dt.pic);
-                    match embed {
-                        Ok(_) => println!("Embed Completed"),
-                        Err(e) => println!("Error: {}", e),
-                    }
-                }
-                None => println!("Download Cancelled"),
-            }
+            act(htc.clone(), dt, choice).await;
         }
         Err(e) => println!("there was an error: {}", e),
     }

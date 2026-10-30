@@ -271,6 +271,7 @@ dependencies = [
 name = "downflac"
 version = "0.1.0"
 dependencies = [
+ "crossterm",
  "indicatif",
  "inquire",
  "lofty",
