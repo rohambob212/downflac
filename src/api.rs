@@ -1,4 +1,4 @@
-use crate::search::itunes::isearch;
+use crate::search::deezer::dsearch;
 use reqwest::Client as httpclient;
 use serde::Serialize;
 use serde_json::Value;
@@ -48,7 +48,7 @@ pub async fn getmdata(
     name: String,
 ) -> Result<Vec<Nusic>, Box<dyn std::error::Error>> {
     let mut nams: Vec<Nusic> = Vec::new();
-    let dsrches: Vec<crate::search::music::Music> = isearch(clnt.clone(), name.clone()).await?;
+    let dsrches: Vec<crate::search::music::Music> = dsearch(clnt.clone(), name.clone()).await?;
     for dsrch in dsrches {
         let srch: Search = Search {
             platform: "kuwo".to_string(),

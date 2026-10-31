@@ -1,4 +1,4 @@
-use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use lofty::{
     config::WriteOptions,
     file::TaggedFileExt,
@@ -6,23 +6,20 @@ use lofty::{
     prelude::*,
     tag::Tag,
 };
-use std::fmt::Write;
-use std::io::{Read, Write as IoWrite};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::io::Cursor;
-use std::{fs::File, io};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn watch_pause(bar: ProgressBar) -> Option<Arc<AtomicBool>> {
-    use crossterm::event::{poll, read, Event, KeyCode, KeyEventKind};
+    use crossterm::event::{Event, KeyCode, KeyEventKind, poll, read};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use std::time::Duration;
 
-    if enable_raw_mode().is_err() {
-        return None;
-    }
+    enable_raw_mode().ok()?;
     let paused = Arc::new(AtomicBool::new(false));
     let flag = paused.clone();
     thread::spawn(move || {
@@ -33,8 +30,7 @@ fn watch_pause(bar: ProgressBar) -> Option<Arc<AtomicBool>> {
             match read() {
                 Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => match k.code {
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        let now = !flag.load(Ordering::SeqCst);
-                        flag.store(now, Ordering::SeqCst);
+                        let now = !flag.fetch_xor(true, Ordering::SeqCst);
                         let msg = if now {
                             "-- paused, Enter or space to resume --"
                         } else {
@@ -56,13 +52,8 @@ fn watch_pause(bar: ProgressBar) -> Option<Arc<AtomicBool>> {
     Some(paused)
 }
 
-fn pump(
-    reader: &mut dyn Read,
-    out: &mut dyn IoWrite,
-    paused: &AtomicBool,
-    mut tick: impl FnMut(usize),
-) -> io::Result<()> {
-    let mut buf = vec![0u8; 64 * 1024];
+fn pump(reader: &mut impl Read, out: &mut impl Write, paused: &AtomicBool) -> io::Result<()> {
+    let mut buf = [0u8; 64 * 1024];
     loop {
         while paused.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_millis(20));
@@ -71,50 +62,42 @@ fn pump(
         if n == 0 {
             return Ok(());
         }
-        while paused.load(Ordering::SeqCst) {
-            thread::sleep(Duration::from_millis(20));
-        }
         out.write_all(&buf[..n])?;
-        tick(n);
     }
 }
 
-pub fn download(link: String, pth: String) -> Result<(), Box<dyn std::error::Error>> {
-    let mut downer = ureq::get(link)
-        .call()
-        .expect("There was an error downloading your file")
-        .into_body();
+pub fn download(link: String, pth: String) -> Result<()> {
+    let mut downer = ureq::get(link).call()?.into_body();
     let progress = ProgressBar::new(downer.content_length().unwrap_or(0));
-    progress.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap()
-            .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-            .progress_chars("#>-"));
+    progress.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})",
+        )?
+        .progress_chars("#>-"),
+    );
+    let mut reader = progress.wrap_read(downer.as_reader());
+    let mut out = File::create(pth)?;
 
-    progress.suspend(|| println!("downloading... Enter or space to pause, Esc to hide this hint"));
+    println!("downloading... Enter or space to pause, Esc to hide this hint");
     let watched = watch_pause(progress.clone());
-    let idle = Arc::new(AtomicBool::new(false));
-    let paused = watched.clone().unwrap_or_else(|| idle.clone());
-    let mut reader = downer.as_reader();
-    let mut out = File::create(pth).expect("there was an error creating the file");
-    let result = pump(&mut reader, &mut out, &paused, |n| progress.inc(n as u64));
+    let paused = watched.clone().unwrap_or_default();
+    let result = pump(&mut reader, &mut out, &paused);
     if watched.is_some() {
         let _ = crossterm::terminal::disable_raw_mode();
     }
     result?;
-    out.flush()?;
     progress.finish();
     Ok(())
 }
 
-pub fn embed_cover(path: String, cover_url: String) -> Result<(), Box<dyn std::error::Error>> {
+pub fn embed_cover(path: String, cover_url: String) -> Result<()> {
     let data = ureq::get(cover_url).call()?.body_mut().read_to_vec()?;
-    let mut pic = Picture::from_reader(&mut Cursor::new(data))?;
+    let mut pic = Picture::from_reader(&mut data.as_slice())?;
     pic.set_pic_type(PictureType::CoverFront);
 
-    let mut file = lofty::read_from_path(path.clone())?;
+    let mut file = lofty::read_from_path(&path)?;
     if file.primary_tag().is_none() {
-        let ty = file.primary_tag_type();
-        file.insert_tag(Tag::new(ty));
+        file.insert_tag(Tag::new(file.primary_tag_type()));
     }
     let tag = file.primary_tag_mut().unwrap();
     tag.push_picture(pic);
