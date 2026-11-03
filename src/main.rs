@@ -3,6 +3,7 @@ mod search {
     pub mod deezer;
     pub mod itunes;
     pub mod music;
+    pub mod spotify;
 }
 use std::{collections::HashMap, env};
 mod download;
@@ -168,6 +169,7 @@ async fn act(htc: httpclient, dt: api::Mdata, choice: String) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let srchr: spotify_anon::AsyncSpotify = spotify_anon::AsyncSpotify::new();
     let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
         .iter()
         .filter_map(|c| reqwest::Certificate::from_der(c).ok());
@@ -208,7 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut opts: Vec<String> = Vec::new();
 
     let mut mhash: HashMap<String, api::Mdata> = HashMap::new();
-    let nusics: Vec<api::Nusic> = api::getmdata(htc.clone(), name)
+    let nusics: Vec<api::Nusic> = api::getmdata(htc.clone(), srchr, name)
         .await
         .expect("there was an error searching for your music");
     for nsc in nusics {

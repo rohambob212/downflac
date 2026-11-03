@@ -1,4 +1,6 @@
 use crate::search::deezer::dsearch;
+use crate::search::spotify::spsearch;
+
 use reqwest::Client as httpclient;
 use serde::Serialize;
 use serde_json::Value;
@@ -45,10 +47,18 @@ pub struct Mdata {
 
 pub async fn getmdata(
     clnt: httpclient,
+    spot: spotify_anon::AsyncSpotify,
     name: String,
 ) -> Result<Vec<Nusic>, Box<dyn std::error::Error>> {
     let mut nams: Vec<Nusic> = Vec::new();
-    let dsrches: Vec<crate::search::music::Music> = dsearch(clnt.clone(), name.clone()).await?;
+    let mut dsrches: Vec<crate::search::music::Music> = Vec::new();
+    if let srch = spot {
+        println!("spot");
+        dsrches = spsearch(srch, name.clone()).await?;
+    } else {
+        println!("deezer");
+        dsrches = dsearch(clnt.clone(), name.clone()).await?;
+    }
     for dsrch in dsrches {
         let srch: Search = Search {
             platform: "kuwo".to_string(),
