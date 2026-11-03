@@ -14,7 +14,9 @@ pub async fn dsearch(
         .json()
         .await
         .expect("there was an error parsing search JSON");
-    let musics = result["data"].as_array().expect("error");
+    let musics = result["data"]
+        .as_array()
+        .expect("deezer didn't return any results");
     let mut mames: Vec<Music> = Vec::new();
     for music in musics {
         let title = music["title"].to_string().trim_matches('"').to_string();
