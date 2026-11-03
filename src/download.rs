@@ -31,12 +31,14 @@ fn watch_pause(bar: ProgressBar) -> Option<Arc<AtomicBool>> {
                 Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => match k.code {
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         let now = !flag.fetch_xor(true, Ordering::SeqCst);
-                        let msg = if now {
+                        bar.set_message(if now {
                             "-- paused, Enter or space to resume --"
                         } else {
-                            "-- resuming --"
-                        };
-                        bar.suspend(|| println!("{msg}"));
+                            ""
+                        });
+                        if !now {
+                            bar.reset_eta();
+                        }
                     }
                     KeyCode::Esc | KeyCode::Char('q') => {
                         let _ = disable_raw_mode();
@@ -71,7 +73,7 @@ pub fn download(link: String, pth: String) -> Result<()> {
     let progress = ProgressBar::new(downer.content_length().unwrap_or(0));
     progress.set_style(
         ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})",
+            "{msg} \n {spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta}) ",
         )?
         .progress_chars("#>-"),
     );
