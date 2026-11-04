@@ -2,13 +2,16 @@ mod api;
 mod search {
     pub mod deezer;
     pub mod itunes;
-    pub mod music;
     pub mod spotify;
+    pub mod structs;
 }
 use std::{collections::HashMap, env};
 mod download;
 mod share;
+use crate::search::structs::{self, Mdata, Nusic};
 use reqwest::Client as httpclient;
+
+use crate::search::spotify;
 
 const HELP: &str = "\
 downflac - search and download music written purely in rust
@@ -123,7 +126,7 @@ fn resolve_name(choice: &str, fmt: &str) -> Option<String> {
     }
 }
 
-async fn save(htc: httpclient, dt: api::Mdata, choice: String) {
+async fn save(htc: httpclient, dt: Mdata, choice: String) {
     let pth = match resolve_name(&choice, &dt.minfo.format) {
         Some(pth) => pth,
         None => {
@@ -147,7 +150,6 @@ async fn save(htc: httpclient, dt: api::Mdata, choice: String) {
         println!("No cover to embed");
         return;
     }
-    println!("{}", dt.pic);
     let embed: Result<(), Box<dyn std::error::Error>> = download::embed_cover(pth, dt.pic);
     match embed {
         Ok(_) => println!("Embed Completed"),
@@ -155,7 +157,7 @@ async fn save(htc: httpclient, dt: api::Mdata, choice: String) {
     }
 }
 
-async fn act(htc: httpclient, dt: api::Mdata, choice: String) {
+async fn act(htc: httpclient, dt: Mdata, choice: String) {
     let opts: Vec<String> = vec!["download".to_string(), "get a share code".to_string()];
     match inquire::Select::new("what do you want to do?", opts).prompt() {
         Ok(o) if o == "download" => save(htc, dt, choice).await,
@@ -209,10 +211,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut opts: Vec<String> = Vec::new();
 
-    let mut mhash: HashMap<String, api::Mdata> = HashMap::new();
-    let nusics: Vec<api::Nusic> = api::getmdata(htc.clone(), srchr, name)
-        .await
-        .expect("there was an error searching for your music");
+    let mut mhash: HashMap<String, structs::Mdata> = HashMap::new();
+    let mut nusics: Vec<structs::Nusic> = Vec::new();
+    if name.contains("open.spotify.com/") {
+        println!("spotify link detected");
+        nusics = spotify::getrack(htc.clone(), srchr.clone(), name.clone())
+            .await
+            .expect("there was an error getting data from spotify")
+    } else {
+        nusics = api::getmdata(htc.clone(), srchr.clone(), name.clone())
+            .await
+            .expect("there was an error searching for your music");
+    }
     for nsc in nusics {
         let nm: String = format!("{} by {} ({})", nsc.title, nsc.artist, nsc.album);
         mhash.insert(nm.clone(), nsc.data);
@@ -222,7 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         inquire::Select::new("select a song", opts).prompt();
     match nmsc {
         Ok(choice) => {
-            let dt: api::Mdata = mhash[&choice].clone();
+            let dt: Mdata = mhash[&choice].clone();
             act(htc.clone(), dt, choice).await;
         }
         Err(e) => println!("there was an error: {}", e),
