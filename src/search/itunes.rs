@@ -1,4 +1,4 @@
-use crate::search::music::Music;
+use crate::search::structs::Music;
 use reqwest::Client as httpclient;
 pub async fn isearch(
     clnt: httpclient,

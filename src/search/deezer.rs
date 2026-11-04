@@ -1,6 +1,6 @@
 use reqwest::Client as httpclient;
 
-use crate::search::music::Music;
+use crate::search::structs::Music;
 pub async fn dsearch(
     clnt: httpclient,
     name: String,

@@ -1,5 +1,5 @@
 use crate::api;
-
+use crate::search::structs::{Mdata, Minfobj, Nusic};
 const MAGIC: &str = "D1";
 
 fn enc(b: &[u8]) -> String {
@@ -92,7 +92,7 @@ fn hexunpack(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-pub fn create(label: &str, dt: &api::Mdata) -> Option<String> {
+pub fn create(label: &str, dt: &Mdata) -> Option<String> {
     let mut raw = Vec::new();
     put(&mut raw, dt.id.as_str())?;
     put(&mut raw, dt.time.as_str())?;
@@ -136,7 +136,7 @@ pub fn parse(s: &str) -> Option<String> {
     Some(format!("{MAGIC}{t}"))
 }
 
-pub fn resolve(token: &str) -> Option<api::Nusic> {
+pub fn resolve(token: &str) -> Option<Nusic> {
     let raw = dec(token.trim_start_matches(MAGIC))?;
     let mut i = 0;
     let id = take(&raw, &mut i)?.to_string();
@@ -166,15 +166,15 @@ pub fn resolve(token: &str) -> Option<api::Nusic> {
         ),
         None => (label.clone(), String::new(), String::new()),
     };
-    Some(api::Nusic {
+    Some(Nusic {
         title,
         artist,
         album,
-        data: api::Mdata {
+        data: Mdata {
             id,
             time,
             sign,
-            minfo: api::Minfobj {
+            minfo: Minfobj {
                 format,
                 bitrate,
                 level: String::new(),
